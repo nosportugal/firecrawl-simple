@@ -1,10 +1,28 @@
 import Redlock from "redlock";
 import Client from "ioredis";
+import { redisConfig, getRedisOptions, getRedisClusterOptions } from "../config/redis-config";
+
+// Parse Redis URL to check if it's a cluster configuration
+const urls = redisConfig.REDIS_RATE_LIMIT_URL?.split(',') || [];
+const isCluster = redisConfig.USE_REDIS_CLUSTER || urls.length > 1;
+
+const redisClient = isCluster
+  ? new Client.Cluster(
+      urls.map((url) => {
+        const parsed = new URL(url);
+        return {
+          host: parsed.hostname,
+          port: parseInt(parsed.port, 10) || 6379,
+        };
+      }),
+      getRedisClusterOptions()
+    )
+  : new Client(redisConfig.REDIS_RATE_LIMIT_URL, getRedisOptions());
 
 export const redlock = new Redlock(
   // You should have one client for each independent redis node
   // or cluster.
-  [new Client(process.env.REDIS_RATE_LIMIT_URL)],
+  [redisClient],
   {
     // The expected clock drift; for more details see:
     // http://redis.io/topics/distlock

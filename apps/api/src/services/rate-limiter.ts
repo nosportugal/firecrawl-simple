@@ -1,6 +1,7 @@
 import { RateLimiterRedis } from "rate-limiter-flexible";
 import { RateLimiterMode } from "../../src/types";
 import Redis from "ioredis";
+import { redisConfig, getRedisOptions, getRedisClusterOptions } from "../config/redis-config";
 
 const RATE_LIMITS = {
   crawl: {
@@ -73,8 +74,24 @@ const RATE_LIMITS = {
   },
 };
 
-export const redisRateLimitClient = new Redis(
-  process.env.REDIS_RATE_LIMIT_URL
+// Parse Redis URL to check if it's a cluster configuration
+const urls = redisConfig.REDIS_RATE_LIMIT_URL?.split(',') || [];
+const isCluster = redisConfig.USE_REDIS_CLUSTER || urls.length > 1;
+
+export const redisRateLimitClient = isCluster
+  ? new Redis.Cluster(
+      urls.map((url) => {
+        const parsed = new URL(url);
+        return {
+          host: parsed.hostname,
+          port: parseInt(parsed.port, 10) || 6379,
+        };
+      }),
+      getRedisClusterOptions()
+    )
+  : new Redis(
+      redisConfig.REDIS_RATE_LIMIT_URL,
+      getRedisOptions()
 )
 
 const createRateLimiter = (keyPrefix, points) =>

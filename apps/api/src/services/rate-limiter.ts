@@ -1,7 +1,12 @@
 import { RateLimiterRedis } from "rate-limiter-flexible";
 import { RateLimiterMode } from "../../src/types";
 import Redis from "ioredis";
-import { redisConfig, getRedisOptions, getRedisClusterOptions } from "../config/redis-config";
+import {
+  redisConfig,
+  getRedisOptions,
+  getRedisClusterOptions,
+} from "../config/redis-config";
+import { REDIS_KEY_PREFIX } from "../lib/redis-keys";
 
 const RATE_LIMITS = {
   crawl: {
@@ -43,7 +48,7 @@ const RATE_LIMITS = {
     growth: 500,
     growthdouble: 500,
   },
-  map:{
+  map: {
     default: 20,
     free: 5,
     starter: 50,
@@ -75,7 +80,7 @@ const RATE_LIMITS = {
 };
 
 // Parse Redis URL to check if it's a cluster configuration
-const urls = redisConfig.REDIS_RATE_LIMIT_URL?.split(',') || [];
+const urls = redisConfig.REDIS_RATE_LIMIT_URL?.split(",") || [];
 const isCluster = redisConfig.USE_REDIS_CLUSTER || urls.length > 1;
 
 export const redisRateLimitClient = isCluster
@@ -87,56 +92,61 @@ export const redisRateLimitClient = isCluster
           port: parseInt(parsed.port, 10) || 6379,
         };
       }),
-      getRedisClusterOptions()
+      getRedisClusterOptions(),
     )
-  : new Redis(
-      redisConfig.REDIS_RATE_LIMIT_URL,
-      getRedisOptions()
-)
+  : new Redis(redisConfig.REDIS_RATE_LIMIT_URL, getRedisOptions());
+
+const prefixedRlKey = (key: string) =>
+  REDIS_KEY_PREFIX ? `${REDIS_KEY_PREFIX}:${key}` : key;
 
 const createRateLimiter = (keyPrefix, points) =>
   new RateLimiterRedis({
     storeClient: redisRateLimitClient,
-    keyPrefix,
+    keyPrefix: prefixedRlKey(keyPrefix),
     points,
     duration: 60, // Duration in seconds
   });
 
 export const serverRateLimiter = createRateLimiter(
   "server",
-  RATE_LIMITS.account.default
+  RATE_LIMITS.account.default,
 );
 
 export const testSuiteRateLimiter = new RateLimiterRedis({
   storeClient: redisRateLimitClient,
-  keyPrefix: "test-suite",
+  keyPrefix: prefixedRlKey("test-suite"),
   points: 10000,
   duration: 60, // Duration in seconds
 });
 
 export const devBRateLimiter = new RateLimiterRedis({
   storeClient: redisRateLimitClient,
-  keyPrefix: "dev-b",
+  keyPrefix: prefixedRlKey("dev-b"),
   points: 1200,
   duration: 60, // Duration in seconds
 });
 
 export const manualRateLimiter = new RateLimiterRedis({
   storeClient: redisRateLimitClient,
-  keyPrefix: "manual",
+  keyPrefix: prefixedRlKey("manual"),
   points: 2000,
   duration: 60, // Duration in seconds
 });
 
-
 export const scrapeStatusRateLimiter = new RateLimiterRedis({
   storeClient: redisRateLimitClient,
-  keyPrefix: "scrape-status",
+  keyPrefix: prefixedRlKey("scrape-status"),
   points: 400,
   duration: 60, // Duration in seconds
 });
 
-const testSuiteTokens = ["a01ccae", "6254cf9", "0f96e673", "23befa1b", "69141c4"];
+const testSuiteTokens = [
+  "a01ccae",
+  "6254cf9",
+  "0f96e673",
+  "23befa1b",
+  "69141c4",
+];
 
 const manual = ["69be9e74-7624-4990-b20d-08e0acc70cf6"];
 
@@ -144,18 +154,17 @@ export function getRateLimiter(
   mode: RateLimiterMode,
   token: string,
   plan?: string,
-  teamId?: string
+  teamId?: string,
 ) {
-  
-  if (testSuiteTokens.some(testToken => token.includes(testToken))) {
+  if (testSuiteTokens.some((testToken) => token.includes(testToken))) {
     return testSuiteRateLimiter;
   }
 
-  if(teamId && teamId === process.env.DEV_B_TEAM_ID) {
+  if (teamId && teamId === process.env.DEV_B_TEAM_ID) {
     return devBRateLimiter;
   }
 
-  if(teamId && manual.includes(teamId)) {
+  if (teamId && manual.includes(teamId)) {
     return manualRateLimiter;
   }
 

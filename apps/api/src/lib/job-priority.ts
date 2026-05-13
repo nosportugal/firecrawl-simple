@@ -1,11 +1,12 @@
 import { redisConnection } from "../../src/services/queue-service";
 import { PlanType } from "../../src/types";
 import { Logger } from "./logger";
+import { redisKey } from "./redis-keys";
 
 const SET_KEY_PREFIX = "limit_team_id:";
 export async function addJobPriority(team_id, job_id) {
   try {
-    const setKey = SET_KEY_PREFIX + team_id;
+    const setKey = redisKey(SET_KEY_PREFIX + team_id);
 
     // Add scrape job id to the set
     await redisConnection.sadd(setKey, job_id);
@@ -19,7 +20,7 @@ export async function addJobPriority(team_id, job_id) {
 
 export async function deleteJobPriority(team_id, job_id) {
   try {
-    const setKey = SET_KEY_PREFIX + team_id;
+    const setKey = redisKey(SET_KEY_PREFIX + team_id);
 
     // remove job_id from the set
     await redisConnection.srem(setKey, job_id);
@@ -38,7 +39,7 @@ export async function getJobPriority({
   basePriority?: number;
 }): Promise<number> {
   try {
-    const setKey = SET_KEY_PREFIX + team_id;
+    const setKey = redisKey(SET_KEY_PREFIX + team_id);
 
     // Get the length of the set
     const setLength = await redisConnection.scard(setKey);
@@ -79,12 +80,12 @@ export async function getJobPriority({
     } else {
       // If not, we keep base priority + planModifier
       return Math.ceil(
-        basePriority + Math.ceil((setLength - bucketLimit) * planModifier)
+        basePriority + Math.ceil((setLength - bucketLimit) * planModifier),
       );
     }
   } catch (e) {
     Logger.error(
-      `Get job priority failed: ${team_id}, ${plan}, ${basePriority}`
+      `Get job priority failed: ${team_id}, ${plan}, ${basePriority}`,
     );
     return basePriority;
   }

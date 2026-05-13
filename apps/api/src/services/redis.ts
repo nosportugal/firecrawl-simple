@@ -1,6 +1,7 @@
 import Redis from "ioredis";
 import { redisRateLimitClient } from "./rate-limiter";
 import { Logger } from "../lib/logger";
+import { redisKey, REDIS_DEFAULT_TTL } from "../lib/redis-keys";
 
 // Listen to 'error' events to the Redis connection
 redisRateLimitClient.on("error", (error) => {
@@ -36,11 +37,9 @@ redisRateLimitClient.on("connect", (err) => {
  * @param {number} [expire] Optional expiration time in seconds.
  */
 const setValue = async (key: string, value: string, expire?: number) => {
-  if (expire) {
-    await redisRateLimitClient.set(key, value, "EX", expire);
-  } else {
-    await redisRateLimitClient.set(key, value);
-  }
+  const prefixedKey = redisKey(key);
+  const ttl = expire ?? REDIS_DEFAULT_TTL;
+  await redisRateLimitClient.set(prefixedKey, value, "EX", ttl);
 };
 
 /**
@@ -49,7 +48,8 @@ const setValue = async (key: string, value: string, expire?: number) => {
  * @returns {Promise<string|null>} The value, if found, otherwise null.
  */
 const getValue = async (key: string): Promise<string | null> => {
-  const value = await redisRateLimitClient.get(key);
+  const prefixedKey = redisKey(key);
+  const value = await redisRateLimitClient.get(prefixedKey);
   return value;
 };
 
@@ -58,7 +58,8 @@ const getValue = async (key: string): Promise<string | null> => {
  * @param {string} key The key to delete.
  */
 const deleteKey = async (key: string) => {
-  await redisRateLimitClient.del(key);
+  const prefixedKey = redisKey(key);
+  await redisRateLimitClient.del(prefixedKey);
 };
 
 export { setValue, getValue, deleteKey };

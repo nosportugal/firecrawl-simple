@@ -1,5 +1,5 @@
-import { promises as fsPromises, existsSync, readFileSync } from 'fs';
-import { Logger } from '../lib/logger';
+import { promises as fsPromises, existsSync, readFileSync } from "fs";
+import { Logger } from "../lib/logger";
 
 /**
  * Helper function to safely read Redis CA certificate from file
@@ -13,7 +13,7 @@ const getRedisCA = (): string | null => {
 
   try {
     if (existsSync(caPath)) {
-      return readFileSync(caPath, 'utf8');
+      return readFileSync(caPath, "utf8");
     } else {
       Logger.warn(`Redis CA certificate file not found: ${caPath}`);
       return null;
@@ -28,7 +28,7 @@ const getRedisCA = (): string | null => {
  * Helper function to check if a value is enabled
  */
 const isEnabled = (value: string | undefined): boolean => {
-  return value === 'true' || value === '1';
+  return value === "true" || value === "1";
 };
 
 /**
@@ -41,18 +41,30 @@ export const redisConfig = {
   REDIS_PASSWORD: process.env.REDIS_PASSWORD,
   REDIS_CA: getRedisCA(),
   REDIS_TLS_ENABLED: isEnabled(process.env.REDIS_TLS_ENABLED),
-  REDIS_TLS_REJECT_UNAUTHORIZED: process.env.REDIS_TLS_REJECT_UNAUTHORIZED !== 'false',
-  REDIS_CONNECT_TIMEOUT: parseInt(process.env.REDIS_CONNECT_TIMEOUT || '10000', 10),
-  REDIS_RETRY_MAX_DELAY: parseInt(process.env.REDIS_RETRY_MAX_DELAY || '3000', 10),
-  REDIS_RETRY_MAX_ATTEMPTS: parseInt(process.env.REDIS_RETRY_MAX_ATTEMPTS || '10', 10),
-  REDIS_ENABLE_OFFLINE_QUEUE: process.env.REDIS_ENABLE_OFFLINE_QUEUE !== 'false',
+  REDIS_TLS_REJECT_UNAUTHORIZED:
+    process.env.REDIS_TLS_REJECT_UNAUTHORIZED !== "false",
+  REDIS_CONNECT_TIMEOUT: parseInt(
+    process.env.REDIS_CONNECT_TIMEOUT || "10000",
+    10,
+  ),
+  REDIS_RETRY_MAX_DELAY: parseInt(
+    process.env.REDIS_RETRY_MAX_DELAY || "3000",
+    10,
+  ),
+  REDIS_RETRY_MAX_ATTEMPTS: parseInt(
+    process.env.REDIS_RETRY_MAX_ATTEMPTS || "10",
+    10,
+  ),
+  REDIS_ENABLE_OFFLINE_QUEUE:
+    process.env.REDIS_ENABLE_OFFLINE_QUEUE !== "false",
   USE_REDIS_CLUSTER: isEnabled(process.env.USE_REDIS_CLUSTER),
 };
 /**
  * Get Redis connection options with TLS support
  */
 export const getRedisOptions = () => {
-  const urls = redisConfig.REDIS_URL?.split(',').map((uri) => new URL(uri)) || [];
+  const urls =
+    redisConfig.REDIS_URL?.split(",").map((uri) => new URL(uri)) || [];
   const username = urls?.[0]?.username || redisConfig.REDIS_USERNAME;
   const password = urls?.[0]?.password || redisConfig.REDIS_PASSWORD;
 
@@ -86,7 +98,7 @@ export const getRedisOptions = () => {
       times > redisConfig.REDIS_RETRY_MAX_ATTEMPTS
     ) {
       Logger.error(
-        `Redis giving up after ${redisConfig.REDIS_RETRY_MAX_ATTEMPTS} reconnection attempts`
+        `Redis giving up after ${redisConfig.REDIS_RETRY_MAX_ATTEMPTS} reconnection attempts`,
       );
       return null;
     }
@@ -103,9 +115,14 @@ export const getRedisOptions = () => {
  */
 export const getRedisClusterOptions = () => {
   const baseOptions = getRedisOptions();
-  
+
   return {
     enableOfflineQueue: redisConfig.REDIS_ENABLE_OFFLINE_QUEUE,
+    slotsRefreshTimeout: parseInt(
+      process.env.REDIS_SLOTS_REFRESH_TIMEOUT || "15000",
+      10,
+    ),
+    dnsLookup: (address, callback) => callback(null, address),
     redisOptions: baseOptions,
     clusterRetryStrategy: (times: number) => {
       if (
@@ -113,12 +130,14 @@ export const getRedisClusterOptions = () => {
         times > redisConfig.REDIS_RETRY_MAX_ATTEMPTS
       ) {
         Logger.error(
-          `Redis Cluster giving up after ${redisConfig.REDIS_RETRY_MAX_ATTEMPTS} reconnection attempts`
+          `Redis Cluster giving up after ${redisConfig.REDIS_RETRY_MAX_ATTEMPTS} reconnection attempts`,
         );
         return null;
       }
       const delay = Math.min(times * 100, redisConfig.REDIS_RETRY_MAX_DELAY);
-      Logger.info(`Redis Cluster reconnecting... attempt ${times}, delay ${delay}ms`);
+      Logger.info(
+        `Redis Cluster reconnecting... attempt ${times}, delay ${delay}ms`,
+      );
       return delay;
     },
   };

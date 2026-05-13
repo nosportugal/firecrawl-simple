@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import Redis from "ioredis";
 import { Logger } from "../../../lib/logger";
 import { redisRateLimitClient } from "../../../services/rate-limiter";
+import { redisKey } from "../../../lib/redis-keys";
 
 export async function redisHealthController(req: Request, res: Response) {
   const retryOperation = async (operation, retries = 3) => {
@@ -19,7 +20,7 @@ export async function redisHealthController(req: Request, res: Response) {
   try {
     const queueRedis = new Redis(process.env.REDIS_URL);
 
-    const testKey = "test";
+    const testKey = redisKey("health-check");
     const testValue = "test";
 
     // Test queueRedis
@@ -38,7 +39,7 @@ export async function redisHealthController(req: Request, res: Response) {
     try {
       await retryOperation(() => redisRateLimitClient.set(testKey, testValue));
       redisRateLimitHealth = await retryOperation(() =>
-        redisRateLimitClient.get(testKey)
+        redisRateLimitClient.get(testKey),
       );
       await retryOperation(() => redisRateLimitClient.del(testKey));
     } catch (error) {
@@ -60,7 +61,7 @@ export async function redisHealthController(req: Request, res: Response) {
       return res.status(200).json({ status: "healthy", details: healthStatus });
     } else {
       Logger.info(
-        `Redis instances health check: ${JSON.stringify(healthStatus)}`
+        `Redis instances health check: ${JSON.stringify(healthStatus)}`,
       );
       return res
         .status(500)

@@ -5,6 +5,7 @@ import {
   redisConnection,
   scrapeQueueName,
 } from "./queue-service";
+import { REDIS_KEY_PREFIX } from "../lib/redis-keys";
 import { logtail } from "./logtail";
 import { startWebScraperPipeline } from "../main/runWebScraper";
 import { Logger } from "../lib/logger";
@@ -84,6 +85,7 @@ const workerFun = async (
 ) => {
   const worker = new Worker(queueName, null, {
     connection: redisConnection,
+    ...(REDIS_KEY_PREFIX ? { prefix: `${REDIS_KEY_PREFIX}:bull` } : {}),
     lockDuration: 1 * 60 * 1000,
     stalledInterval: 30 * 1000,
     maxStalledCount: 10,

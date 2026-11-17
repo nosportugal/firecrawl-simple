@@ -1,7 +1,7 @@
 import axios from "axios";
 import { load } from "cheerio";
 import { URL } from "url";
-import { getLinksFromSitemap } from "./sitemap";
+import { fetchSitemap, getLinksFromSitemap } from "./sitemap";
 import async from "async";
 import { CrawlerOptions, PageOptions, Progress } from "../../lib/entities";
 import { scrapeSingleUrl } from "./single_url";
@@ -533,7 +533,7 @@ export class WebCrawler {
     let sitemapLinks: string[] = [];
 
     try {
-      const response = await axios.get(sitemapUrl, { timeout: axiosTimeout });
+      const response = await fetchSitemap(sitemapUrl);
       if (response.status === 200) {
         sitemapLinks = await getLinksFromSitemap({ sitemapUrl });
       }
@@ -546,9 +546,7 @@ export class WebCrawler {
     if (sitemapLinks.length === 0) {
       const baseUrlSitemap = `${this.baseUrl}/sitemap.xml`;
       try {
-        const response = await axios.get(baseUrlSitemap, {
-          timeout: axiosTimeout,
-        });
+        const response = await fetchSitemap(baseUrlSitemap);
         if (response.status === 200) {
           sitemapLinks = await getLinksFromSitemap({
             sitemapUrl: baseUrlSitemap,

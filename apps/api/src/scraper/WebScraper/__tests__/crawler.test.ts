@@ -1,6 +1,8 @@
 // crawler.test.ts
 import { WebCrawler } from "../crawler";
 import axios from "axios";
+import dns from "node:dns/promises";
+import tls from "node:tls";
 import robotsParser from "robots-parser";
 
 jest.mock("axios");
@@ -32,6 +34,10 @@ describe("WebCrawler", () => {
       getSitemaps: jest.fn().mockReturnValue([]),
       getPreferredHost: jest.fn().mockReturnValue("example.com"),
     });
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
   it("should ignore social media and email links", async () => {
@@ -77,4 +83,40 @@ describe("WebCrawler", () => {
       expect(mockAxios.get).not.toHaveBeenCalled();
     }
   );
+
+  it("pins the robots request URL to the validated IP and preserves host and TLS identity", async () => {
+    jest.spyOn(dns, "lookup").mockImplementation(
+      (async () => [{ address: "93.184.216.34", family: 4 }]) as any
+    );
+    crawler = new WebCrawler({
+      jobId: "TEST",
+      initialUrl: "https://example.com:8443/some/path",
+      crawlId: "TEST",
+    });
+
+    await crawler.getRobotsTxt();
+
+    const [requestUrl, requestOptions] = mockAxios.get.mock.calls[0];
+    expect(requestUrl).toBe("https://93.184.216.34:8443/robots.txt");
+    expect(requestOptions).toMatchObject({
+      maxRedirects: 0,
+      headers: { Host: "example.com:8443" },
+    });
+    const httpsAgent = requestOptions.httpsAgent as import("node:https").Agent;
+    expect(httpsAgent.options.servername).toBe("example.com");
+    expect(httpsAgent.options.checkServerIdentity).toEqual(
+      expect.any(Function)
+    );
+
+    const certificate = {} as tls.PeerCertificate;
+    const verifyCertificate =
+      httpsAgent.options.checkServerIdentity as NonNullable<
+        typeof httpsAgent.options.checkServerIdentity
+      >;
+    const identityCheck = jest
+      .spyOn(tls, "checkServerIdentity")
+      .mockReturnValue(undefined);
+    verifyCertificate("93.184.216.34", certificate);
+    expect(identityCheck).toHaveBeenCalledWith("example.com", certificate);
+  });
 });

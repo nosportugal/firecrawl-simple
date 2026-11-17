@@ -2,8 +2,8 @@ import axios from "axios";
 import { load } from "cheerio";
 import { URL } from "url";
 import dns from "node:dns/promises";
-import http from "node:http";
 import https from "node:https";
+import tls from "node:tls";
 import { BlockList, isIP } from "node:net";
 import { getLinksFromSitemap } from "./sitemap";
 import async from "async";
@@ -133,27 +133,36 @@ export class WebCrawler {
     }
 
     const selectedAddress = addresses[0];
-    const lookup = ((
-      _hostname: string,
-      _options: any,
-      callback: any
-    ) => {
-      if (_options?.all) callback(null, [selectedAddress]);
-      else callback(null, selectedAddress.address, selectedAddress.family);
-    }) as any;
-    const httpAgent = new http.Agent({ lookup });
-    const httpsAgent = new https.Agent({ lookup });
+    if (target.protocol !== "http:" && target.protocol !== "https:") {
+      throw new UnsafeRobotsTargetError(
+        `Refusing unsupported robots.txt protocol: ${target.protocol}`
+      );
+    }
+
+    const ipHost =
+      selectedAddress.family === 6
+        ? `[${selectedAddress.address}]`
+        : selectedAddress.address;
+    const requestUrl = new URL(
+      `${target.protocol}//${ipHost}${
+        target.port ? `:${target.port}` : ""
+      }/robots.txt`
+    );
+    const httpsAgent = new https.Agent({
+      ...(isIP(hostname) === 0 ? { servername: hostname } : {}),
+      checkServerIdentity: (_servername, certificate) =>
+        tls.checkServerIdentity(hostname, certificate),
+    });
 
     try {
-      const response = await axios.get(this.robotsTxtUrl, {
+      const response = await axios.get(requestUrl.href, {
         timeout: axiosTimeout,
         maxRedirects: 0,
-        httpAgent,
+        headers: { Host: target.host },
         httpsAgent,
       });
       return response.data;
     } finally {
-      httpAgent.destroy();
       httpsAgent.destroy();
     }
   }

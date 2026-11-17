@@ -1,23 +1,210 @@
 import axios from "axios";
+import { lookup as dnsLookup } from "node:dns/promises";
+import { Agent as HttpAgent } from "node:http";
+import { isIP } from "node:net";
+import { Agent as HttpsAgent } from "node:https";
 import { axiosTimeout } from "../../lib/timeout";
 import { parseStringPromise } from "xml2js";
 import { WebCrawler } from "./crawler";
 import { Logger } from "../../lib/logger";
 
+const nonPublicIpv4Ranges: Array<[string, number]> = [
+  ["0.0.0.0", 8],
+  ["10.0.0.0", 8],
+  ["100.64.0.0", 10],
+  ["127.0.0.0", 8],
+  ["169.254.0.0", 16],
+  ["172.16.0.0", 12],
+  ["192.0.0.0", 24],
+  ["192.0.2.0", 24],
+  ["192.88.99.0", 24],
+  ["192.168.0.0", 16],
+  ["198.18.0.0", 15],
+  ["198.51.100.0", 24],
+  ["203.0.113.0", 24],
+  ["224.0.0.0", 4],
+  ["240.0.0.0", 4],
+];
+
+const ipv4ToNumber = (address: string): number =>
+  address
+    .split(".")
+    .map(Number)
+    .reduce((result, octet) => result * 256 + octet, 0);
+
+const isInIpv4Range = (
+  address: number,
+  network: string,
+  prefixLength: number
+): boolean => {
+  const blockSize = 2 ** (32 - prefixLength);
+  return Math.floor(address / blockSize) ===
+    Math.floor(ipv4ToNumber(network) / blockSize);
+};
+
+const ipv6ToBigInt = (address: string): bigint | null => {
+  let normalized = address.toLowerCase();
+  if (normalized.includes(".")) {
+    const lastColon = normalized.lastIndexOf(":");
+    const octets = normalized
+      .slice(lastColon + 1)
+      .split(".")
+      .map(Number);
+    if (octets.length !== 4) return null;
+    const high = ((octets[0] << 8) | octets[1]).toString(16);
+    const low = ((octets[2] << 8) | octets[3]).toString(16);
+    normalized = `${normalized.slice(0, lastColon)}:${high}:${low}`;
+  }
+
+  const [left = "", right = ""] = normalized.split("::");
+  const leftParts = left ? left.split(":") : [];
+  const rightParts = right ? right.split(":") : [];
+  const missingParts = 8 - leftParts.length - rightParts.length;
+  if (
+    missingParts < 0 ||
+    (normalized.includes("::") ? missingParts < 1 : missingParts !== 0)
+  ) {
+    return null;
+  }
+
+  const parts = [
+    ...leftParts,
+    ...Array(missingParts).fill("0"),
+    ...rightParts,
+  ];
+  if (parts.length !== 8) return null;
+
+  return parts.reduce(
+    (result, part) => (result << 16n) | BigInt(`0x${part || "0"}`),
+    0n
+  );
+};
+
+const isInIpv6Range = (
+  address: bigint,
+  network: string,
+  prefixLength: number
+): boolean => {
+  const shift = BigInt(128 - prefixLength);
+  return address >> shift === BigInt(`0x${network}`) >> shift;
+};
+
+const isPublicIp = (address: string): boolean => {
+  const family = isIP(address);
+  if (family === 4) {
+    const numericAddress = ipv4ToNumber(address);
+    return !nonPublicIpv4Ranges.some(([network, prefixLength]) =>
+      isInIpv4Range(numericAddress, network, prefixLength)
+    );
+  }
+  if (family !== 6) return false;
+
+  const numericAddress = ipv6ToBigInt(address);
+  if (numericAddress === null) return false;
+
+  return (
+    isInIpv6Range(numericAddress, "20000000000000000000000000000000", 3) &&
+    !isInIpv6Range(numericAddress, "20010000000000000000000000000000", 23) &&
+    !isInIpv6Range(numericAddress, "20010db8000000000000000000000000", 32) &&
+    !isInIpv6Range(numericAddress, "20020000000000000000000000000000", 16) &&
+    !isInIpv6Range(numericAddress, "3fff0000000000000000000000000000", 20)
+  );
+};
+
+const getSafeSitemapRequestOptions = async (
+  sitemapUrl: string,
+  timeout: number
+) => {
+  const parsedUrl = new URL(sitemapUrl);
+  if (
+    (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") ||
+    parsedUrl.username ||
+    parsedUrl.password
+  ) {
+    throw new Error("Invalid sitemap URL");
+  }
+
+  const hostname = parsedUrl.hostname.replace(/^\[|\]$/g, "");
+  const family = isIP(hostname);
+  const resolvedAddresses = family
+    ? [{ address: hostname, family }]
+    : await dnsLookup(hostname, { all: true, verbatim: true });
+
+  if (
+    resolvedAddresses.length === 0 ||
+    resolvedAddresses.some(({ address }) => !isPublicIp(address))
+  ) {
+    throw new Error("Sitemap URL resolves to a non-public address");
+  }
+
+  const pinnedAddress = resolvedAddresses[0];
+  const normalizeHostname = (value: string) =>
+    value.toLowerCase().replace(/\.$/, "");
+  const pinnedLookup: any = (
+    requestHostname: string,
+    options: any,
+    callback: any
+  ) => {
+    if (normalizeHostname(requestHostname) !== normalizeHostname(hostname)) {
+      const error = Object.assign(new Error("Unexpected sitemap hostname"), {
+        code: "ENOTFOUND",
+      });
+      callback(error);
+      return;
+    }
+
+    if (options?.all) {
+      callback(null, [pinnedAddress]);
+    } else {
+      callback(null, pinnedAddress.address, pinnedAddress.family);
+    }
+  };
+
+  return {
+    timeout,
+    maxRedirects: 0,
+    proxy: false,
+    httpAgent: new HttpAgent({ lookup: pinnedLookup }),
+    httpsAgent: new HttpsAgent({ lookup: pinnedLookup }),
+  };
+};
+
 export async function getLinksFromSitemap({
   sitemapUrl,
   allUrls = [],
+  allowedOrigin,
 }: {
   sitemapUrl: string;
   allUrls?: string[];
+  allowedOrigin?: string;
 }): Promise<string[]> {
   try {
+    const parsedSitemapUrl = new URL(sitemapUrl);
+    if (
+      (parsedSitemapUrl.protocol !== "http:" &&
+        parsedSitemapUrl.protocol !== "https:") ||
+      parsedSitemapUrl.username ||
+      parsedSitemapUrl.password
+    ) {
+      return allUrls;
+    }
+
+    const sitemapOrigin = allowedOrigin ?? parsedSitemapUrl.origin;
+    if (parsedSitemapUrl.origin !== sitemapOrigin) {
+      return allUrls;
+    }
+
+    const safeSitemapUrl = parsedSitemapUrl.href;
     let content: string;
     try {
-      const response = await axios.get(sitemapUrl, { timeout: axiosTimeout });
+      const requestOptions = await getSafeSitemapRequestOptions(
+        safeSitemapUrl,
+        axiosTimeout
+      );
+      const response = await axios.get(safeSitemapUrl, requestOptions);
       content = response.data;
     } catch (error) {
-      Logger.error(`Request failed for ${sitemapUrl}: ${error.message}`);
+      Logger.error(`Request failed for ${safeSitemapUrl}: ${error.message}`);
 
       return allUrls;
     }
@@ -29,8 +216,9 @@ export async function getLinksFromSitemap({
       for (const sitemap of root.sitemap) {
         if (sitemap.loc && sitemap.loc.length > 0) {
           await getLinksFromSitemap({
-            sitemapUrl: sitemap.loc[0],
+            sitemapUrl: new URL(sitemap.loc[0], safeSitemapUrl).href,
             allUrls,
+            allowedOrigin: sitemapOrigin,
           });
         }
       }
@@ -60,9 +248,11 @@ export const fetchSitemapData = async (
 ): Promise<SitemapEntry[] | null> => {
   const sitemapUrl = url.endsWith("/sitemap.xml") ? url : `${url}/sitemap.xml`;
   try {
-    const response = await axios.get(sitemapUrl, {
-      timeout: timeout || axiosTimeout,
-    });
+    const requestOptions = await getSafeSitemapRequestOptions(
+      sitemapUrl,
+      timeout || axiosTimeout
+    );
+    const response = await axios.get(sitemapUrl, requestOptions);
     if (response.status === 200) {
       const xml = response.data;
       const parsedXml = await parseStringPromise(xml);

@@ -533,10 +533,7 @@ export class WebCrawler {
     let sitemapLinks: string[] = [];
 
     try {
-      const response = await axios.get(sitemapUrl, { timeout: axiosTimeout });
-      if (response.status === 200) {
-        sitemapLinks = await getLinksFromSitemap({ sitemapUrl });
-      }
+      sitemapLinks = await getLinksFromSitemap({ sitemapUrl });
     } catch (error) {
       Logger.debug(
         `Failed to fetch sitemap with axios from ${sitemapUrl}: ${error}`
@@ -546,14 +543,9 @@ export class WebCrawler {
     if (sitemapLinks.length === 0) {
       const baseUrlSitemap = `${this.baseUrl}/sitemap.xml`;
       try {
-        const response = await axios.get(baseUrlSitemap, {
-          timeout: axiosTimeout,
+        sitemapLinks = await getLinksFromSitemap({
+          sitemapUrl: baseUrlSitemap,
         });
-        if (response.status === 200) {
-          sitemapLinks = await getLinksFromSitemap({
-            sitemapUrl: baseUrlSitemap,
-          });
-        }
       } catch (error) {
         Logger.debug(
           `Failed to fetch sitemap from ${baseUrlSitemap}: ${error}`

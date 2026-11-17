@@ -63,4 +63,18 @@ describe("WebCrawler", () => {
     expect(filteredLinks).toContain("https://docs.mux.com/guides/player");
     expect(filteredLinks.length).toBe(2);
   });
+
+  it.each(["http://127.0.0.1", "http://[::1]"])(
+    "should not crawl a private IP address: %s",
+    async (initialUrl) => {
+      crawler = new WebCrawler({
+        jobId: "TEST",
+        initialUrl,
+        crawlId: "TEST",
+      });
+
+      await expect(crawler.start()).resolves.toEqual([]);
+      expect(mockAxios.get).not.toHaveBeenCalled();
+    }
+  );
 });

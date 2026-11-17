@@ -1,6 +1,10 @@
 import axios from "axios";
 import { load } from "cheerio";
 import { URL } from "url";
+import dns from "node:dns/promises";
+import http from "node:http";
+import https from "node:https";
+import { BlockList, isIP } from "node:net";
 import { getLinksFromSitemap } from "./sitemap";
 import async from "async";
 import { CrawlerOptions, PageOptions, Progress } from "../../lib/entities";
@@ -8,6 +12,53 @@ import { scrapeSingleUrl } from "./single_url";
 import robotsParser from "robots-parser";
 import { axiosTimeout } from "../../../src/lib/timeout";
 import { Logger } from "../../../src/lib/logger";
+
+class UnsafeRobotsTargetError extends Error {}
+
+const blockedIpv4Ranges = new BlockList();
+[
+  ["0.0.0.0", 8],
+  ["10.0.0.0", 8],
+  ["100.64.0.0", 10],
+  ["127.0.0.0", 8],
+  ["169.254.0.0", 16],
+  ["172.16.0.0", 12],
+  ["192.0.0.0", 24],
+  ["192.0.2.0", 24],
+  ["192.88.99.0", 24],
+  ["192.168.0.0", 16],
+  ["198.18.0.0", 15],
+  ["198.51.100.0", 24],
+  ["203.0.113.0", 24],
+  ["224.0.0.0", 4],
+  ["240.0.0.0", 4],
+].forEach(([address, prefix]) =>
+  blockedIpv4Ranges.addSubnet(address as string, prefix as number, "ipv4")
+);
+
+const globalIpv6Range = new BlockList();
+globalIpv6Range.addSubnet("2000::", 3, "ipv6");
+
+const blockedIpv6Ranges = new BlockList();
+blockedIpv6Ranges.addSubnet("2001::", 23, "ipv6");
+blockedIpv6Ranges.addSubnet("2001:db8::", 32, "ipv6");
+blockedIpv6Ranges.addSubnet("2002::", 16, "ipv6");
+
+function isPublicAddress(address: string): boolean {
+  const version = isIP(address);
+  if (version === 4) {
+    return !blockedIpv4Ranges.check(address, "ipv4");
+  }
+
+  if (version === 6) {
+    return (
+      globalIpv6Range.check(address, "ipv6") &&
+      !blockedIpv6Ranges.check(address, "ipv6")
+    );
+  }
+
+  return false;
+}
 
 export class WebCrawler {
   private jobId: string;
@@ -62,10 +113,49 @@ export class WebCrawler {
   }
 
   public async getRobotsTxt(): Promise<string> {
-    const response = await axios.get(this.robotsTxtUrl, {
-      timeout: axiosTimeout,
+    const target = new URL(this.robotsTxtUrl);
+    const hostname = target.hostname.replace(/^\[|\]$/g, "");
+    const addresses = await dns.lookup(hostname, { all: true }).catch((error) => {
+      throw new UnsafeRobotsTargetError(
+        `Unable to validate robots.txt target ${hostname}: ${error.message}`
+      );
     });
-    return response.data;
+
+    // Reject mixed public/private DNS answers as well as private literals. Pin
+    // the selected address for this request to prevent a DNS-rebinding race.
+    if (
+      addresses.length === 0 ||
+      addresses.some(({ address }) => !isPublicAddress(address))
+    ) {
+      throw new UnsafeRobotsTargetError(
+        `Refusing robots.txt request to a non-public host: ${hostname}`
+      );
+    }
+
+    const selectedAddress = addresses[0];
+    const lookup = ((
+      _hostname: string,
+      _options: any,
+      callback: any
+    ) => {
+      if (_options?.all) callback(null, [selectedAddress]);
+      else callback(null, selectedAddress.address, selectedAddress.family);
+    }) as any;
+    const httpAgent = new http.Agent({ lookup });
+    const httpsAgent = new https.Agent({ lookup });
+
+    try {
+      const response = await axios.get(this.robotsTxtUrl, {
+        timeout: axiosTimeout,
+        maxRedirects: 0,
+        httpAgent,
+        httpsAgent,
+      });
+      return response.data;
+    } finally {
+      httpAgent.destroy();
+      httpsAgent.destroy();
+    }
   }
 
   public importRobotsTxt(txt: string) {
@@ -109,6 +199,10 @@ export class WebCrawler {
       this.importRobotsTxt(txt);
       Logger.debug(`Crawler robots.txt fetched with ${this.robotsTxtUrl}`);
     } catch (error) {
+      if (error instanceof UnsafeRobotsTargetError) {
+        Logger.debug(error.message);
+        return [];
+      }
       Logger.debug(`Failed to fetch robots.txt from ${this.robotsTxtUrl}`);
     }
 

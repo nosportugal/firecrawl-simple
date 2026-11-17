@@ -3,6 +3,7 @@ import { lookup as dnsLookup } from "node:dns/promises";
 import { Agent as HttpAgent } from "node:http";
 import { isIP } from "node:net";
 import { Agent as HttpsAgent } from "node:https";
+import { checkServerIdentity } from "node:tls";
 import { axiosTimeout } from "../../lib/timeout";
 import { parseStringPromise } from "xml2js";
 import { WebCrawler } from "./crawler";
@@ -113,7 +114,9 @@ const isPublicIp = (address: string): boolean => {
 
 const getSafeSitemapRequestOptions = async (
   sitemapUrl: string,
-  timeout: number
+  timeout: number,
+  requestPath: string,
+  requestSearch = ""
 ) => {
   const parsedUrl = new URL(sitemapUrl);
   if (
@@ -138,34 +141,32 @@ const getSafeSitemapRequestOptions = async (
   }
 
   const pinnedAddress = resolvedAddresses[0];
-  const normalizeHostname = (value: string) =>
-    value.toLowerCase().replace(/\.$/, "");
-  const pinnedLookup: any = (
-    requestHostname: string,
-    options: any,
-    callback: any
-  ) => {
-    if (normalizeHostname(requestHostname) !== normalizeHostname(hostname)) {
-      const error = Object.assign(new Error("Unexpected sitemap hostname"), {
-        code: "ENOTFOUND",
-      });
-      callback(error);
-      return;
-    }
-
-    if (options?.all) {
-      callback(null, [pinnedAddress]);
-    } else {
-      callback(null, pinnedAddress.address, pinnedAddress.family);
-    }
-  };
+  const pinnedHost =
+    pinnedAddress.family === 6
+      ? `[${pinnedAddress.address}]`
+      : pinnedAddress.address;
+  const requestProtocol =
+    parsedUrl.protocol === "https:" ? "https:" : "http:";
+  const requestUrl = new URL(`${requestProtocol}//${pinnedHost}`);
+  requestUrl.port = parsedUrl.port;
+  requestUrl.pathname = requestPath;
+  requestUrl.search = requestSearch;
 
   return {
-    timeout,
-    maxRedirects: 0,
-    proxy: false,
-    httpAgent: new HttpAgent({ lookup: pinnedLookup }),
-    httpsAgent: new HttpsAgent({ lookup: pinnedLookup }),
+    url: requestUrl.href,
+    options: {
+      timeout,
+      maxRedirects: 0,
+      proxy: false,
+      // Connect to the vetted IP while retaining HTTP and TLS host identity.
+      headers: { Host: parsedUrl.host },
+      httpAgent: new HttpAgent(),
+      httpsAgent: new HttpsAgent({
+        ...(family === 0 ? { servername: hostname } : {}),
+        checkServerIdentity: (_requestHostname, certificate) =>
+          checkServerIdentity(hostname, certificate),
+      }),
+    },
   };
 };
 
@@ -197,11 +198,14 @@ export async function getLinksFromSitemap({
     const safeSitemapUrl = parsedSitemapUrl.href;
     let content: string;
     try {
-      const requestOptions = await getSafeSitemapRequestOptions(
-        safeSitemapUrl,
-        axiosTimeout
-      );
-      const response = await axios.get(safeSitemapUrl, requestOptions);
+      const { url: requestUrl, options: requestOptions } =
+        await getSafeSitemapRequestOptions(
+          safeSitemapUrl,
+          axiosTimeout,
+          parsedSitemapUrl.pathname,
+          parsedSitemapUrl.search
+        );
+      const response = await axios.get(requestUrl, requestOptions);
       content = response.data;
     } catch (error) {
       Logger.error(`Request failed for ${safeSitemapUrl}: ${error.message}`);
@@ -248,11 +252,13 @@ export const fetchSitemapData = async (
 ): Promise<SitemapEntry[] | null> => {
   const sitemapUrl = url.endsWith("/sitemap.xml") ? url : `${url}/sitemap.xml`;
   try {
-    const requestOptions = await getSafeSitemapRequestOptions(
-      sitemapUrl,
-      timeout || axiosTimeout
-    );
-    const response = await axios.get(sitemapUrl, requestOptions);
+    const { url: requestUrl, options: requestOptions } =
+      await getSafeSitemapRequestOptions(
+        sitemapUrl,
+        timeout || axiosTimeout,
+        "/sitemap.xml"
+      );
+    const response = await axios.get(requestUrl, requestOptions);
     if (response.status === 200) {
       const xml = response.data;
       const parsedXml = await parseStringPromise(xml);

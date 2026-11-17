@@ -71,8 +71,11 @@ describe("getLinksFromSitemap", () => {
 
     expect(mockAxios.get).toHaveBeenCalledTimes(1);
     expect(mockAxios.get).toHaveBeenCalledWith(
-      "https://example.com/sitemap.xml",
-      expect.objectContaining({ maxRedirects: 0 })
+      "https://93.184.216.34/sitemap.xml",
+      expect.objectContaining({
+        maxRedirects: 0,
+        headers: { Host: "example.com" },
+      })
     );
   });
 
@@ -98,7 +101,7 @@ describe("getLinksFromSitemap", () => {
 
   it("follows sitemap-index locations on the same origin", async () => {
     mockAxios.get.mockImplementation(async (url) => {
-      if (url === "https://example.com/sitemap.xml") {
+      if (url === "https://93.184.216.34/sitemap.xml") {
         return {
           data: `
             <sitemapindex>
@@ -124,38 +127,35 @@ describe("getLinksFromSitemap", () => {
     expect(links).toEqual(["https://example.com/page"]);
     expect(mockAxios.get).toHaveBeenCalledTimes(2);
     expect(mockAxios.get).toHaveBeenLastCalledWith(
-      "https://example.com/nested.xml",
-      expect.objectContaining({ maxRedirects: 0 })
+      "https://93.184.216.34/nested.xml",
+      expect.objectContaining({
+        maxRedirects: 0,
+        headers: { Host: "example.com" },
+      })
     );
   });
 
-  it("pins the validated DNS address for the sitemap request", async () => {
+  it("preserves custom path and query while using the pinned IP and TLS identity", async () => {
     mockAxios.get.mockResolvedValue({ data: "<urlset />" } as any);
 
     await getLinksFromSitemap({
-      sitemapUrl: "https://example.com/sitemap.xml",
+      sitemapUrl: "https://example.com:8443/custom-sitemap.xml?section=1",
     });
 
+    expect(mockAxios.get).toHaveBeenCalledWith(
+      "https://93.184.216.34:8443/custom-sitemap.xml?section=1",
+      expect.objectContaining({
+        headers: { Host: "example.com:8443" },
+      })
+    );
     const requestOptions = mockAxios.get.mock.calls[0][1] as any;
     expect(requestOptions.maxRedirects).toBe(0);
     expect(requestOptions.proxy).toBe(false);
-
-    mockDnsLookup.mockResolvedValue([
-      { address: "127.0.0.1", family: 4 },
-    ]);
-    const lookup = requestOptions.httpsAgent.options.lookup;
-    const resolved = await new Promise((resolve, reject) => {
-      lookup(
-        "example.com",
-        {},
-        (error: Error | null, address: any, family: number) => {
-          if (error) reject(error);
-          else resolve({ address, family });
-        }
-      );
-    });
-
-    expect(resolved).toEqual({ address: "93.184.216.34", family: 4 });
+    expect(requestOptions.httpsAgent.options.servername).toBe("example.com");
+    expect(requestOptions.httpsAgent.options.checkServerIdentity).toEqual(
+      expect.any(Function)
+    );
+    expect(requestOptions.httpsAgent.options.lookup).toBeUndefined();
     expect(mockDnsLookup).toHaveBeenCalledTimes(1);
   });
 });
@@ -196,10 +196,11 @@ describe("fetchSitemapData", () => {
     await fetchSitemapData("https://example.com");
 
     expect(mockAxios.get).toHaveBeenCalledWith(
-      "https://example.com/sitemap.xml",
+      "https://93.184.216.34/sitemap.xml",
       expect.objectContaining({
         maxRedirects: 0,
         proxy: false,
+        headers: { Host: "example.com" },
         httpsAgent: expect.any(Object),
       })
     );

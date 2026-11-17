@@ -38,6 +38,7 @@ describe("WebCrawler", () => {
 
   afterEach(() => {
     jest.restoreAllMocks();
+    mockAxios.get.mockClear();
   });
 
   it("should ignore social media and email links", async () => {
@@ -90,17 +91,17 @@ describe("WebCrawler", () => {
     );
     crawler = new WebCrawler({
       jobId: "TEST",
-      initialUrl: "https://example.com:8443/some/path",
+      initialUrl: "https://example.com/some/path",
       crawlId: "TEST",
     });
 
     await crawler.getRobotsTxt();
 
     const [requestUrl, requestOptions] = mockAxios.get.mock.calls[0];
-    expect(requestUrl).toBe("https://93.184.216.34:8443/robots.txt");
+    expect(requestUrl).toBe("https://93.184.216.34/robots.txt");
     expect(requestOptions).toMatchObject({
       maxRedirects: 0,
-      headers: { Host: "example.com:8443" },
+      headers: { Host: "example.com" },
     });
     const httpsAgent = requestOptions.httpsAgent as import("node:https").Agent;
     expect(httpsAgent.options.servername).toBe("example.com");
@@ -118,5 +119,18 @@ describe("WebCrawler", () => {
       .mockReturnValue(undefined);
     verifyCertificate("93.184.216.34", certificate);
     expect(identityCheck).toHaveBeenCalledWith("example.com", certificate);
+  });
+
+  it("rejects non-default ports instead of including them in the request URL", async () => {
+    crawler = new WebCrawler({
+      jobId: "TEST",
+      initialUrl: "https://example.com:8443",
+      crawlId: "TEST",
+    });
+
+    await expect(crawler.getRobotsTxt()).rejects.toThrow(
+      "Refusing robots.txt request on non-default port 8443"
+    );
+    expect(mockAxios.get).not.toHaveBeenCalled();
   });
 });

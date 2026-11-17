@@ -115,6 +115,23 @@ export class WebCrawler {
   public async getRobotsTxt(): Promise<string> {
     const target = new URL(this.robotsTxtUrl);
     const hostname = target.hostname.replace(/^\[|\]$/g, "");
+    const scheme =
+      target.protocol === "https:"
+        ? "https:"
+        : target.protocol === "http:"
+        ? "http:"
+        : null;
+    if (!scheme) {
+      throw new UnsafeRobotsTargetError(
+        `Refusing unsupported robots.txt protocol: ${target.protocol}`
+      );
+    }
+    if (target.port) {
+      throw new UnsafeRobotsTargetError(
+        `Refusing robots.txt request on non-default port ${target.port}`
+      );
+    }
+
     const addresses = await dns.lookup(hostname, { all: true }).catch((error) => {
       throw new UnsafeRobotsTargetError(
         `Unable to validate robots.txt target ${hostname}: ${error.message}`
@@ -133,21 +150,11 @@ export class WebCrawler {
     }
 
     const selectedAddress = addresses[0];
-    if (target.protocol !== "http:" && target.protocol !== "https:") {
-      throw new UnsafeRobotsTargetError(
-        `Refusing unsupported robots.txt protocol: ${target.protocol}`
-      );
-    }
-
     const ipHost =
       selectedAddress.family === 6
         ? `[${selectedAddress.address}]`
         : selectedAddress.address;
-    const requestUrl = new URL(
-      `${target.protocol}//${ipHost}${
-        target.port ? `:${target.port}` : ""
-      }/robots.txt`
-    );
+    const requestUrl = `${scheme}//${ipHost}/robots.txt`;
     const httpsAgent = new https.Agent({
       ...(isIP(hostname) === 0 ? { servername: hostname } : {}),
       checkServerIdentity: (_servername, certificate) =>
@@ -155,7 +162,7 @@ export class WebCrawler {
     });
 
     try {
-      const response = await axios.get(requestUrl.href, {
+      const response = await axios.get(requestUrl, {
         timeout: axiosTimeout,
         maxRedirects: 0,
         headers: { Host: target.host },

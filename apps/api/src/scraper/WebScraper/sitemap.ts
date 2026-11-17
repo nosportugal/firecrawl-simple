@@ -95,13 +95,24 @@ export const fetchSitemap = async (url: string, timeout = axiosTimeout) => {
     throw new Error("Invalid sitemap URL");
   }
 
-  await lookupPublicAddresses(parsedUrl.hostname);
-  return axios.get(url, {
+  const [address] = await lookupPublicAddresses(parsedUrl.hostname);
+  const requestHost =
+    address.family === 6 ? `[${address.address}]` : address.address;
+  const requestUrl = `${parsedUrl.protocol}//${requestHost}${
+    parsedUrl.port ? `:${parsedUrl.port}` : ""
+  }${parsedUrl.pathname}${parsedUrl.search}`;
+  const isIpAddress = isIP(parsedUrl.hostname.replace(/^\[|\]$/g, "")) !== 0;
+
+  return axios.get(requestUrl, {
     timeout,
     maxRedirects: 0,
     proxy: false,
+    headers: { Host: parsedUrl.host },
     httpAgent: new http.Agent({ lookup: safeLookup }),
-    httpsAgent: new https.Agent({ lookup: safeLookup }),
+    httpsAgent: new https.Agent({
+      lookup: safeLookup,
+      servername: isIpAddress ? undefined : parsedUrl.hostname,
+    }),
   });
 };
 

@@ -54,12 +54,14 @@ describe("fetchSitemap", () => {
       ) => void
     ) => void;
 
-    expect(url).toBe("https://example.test/sitemap.xml");
+    expect(url).toBe("https://93.184.216.34/sitemap.xml");
     expect(options?.maxRedirects).toBe(0);
     expect(options?.proxy).toBe(false);
+    expect(options?.headers?.Host).toBe("example.test");
+    expect(options?.httpsAgent?.options.servername).toBe("example.test");
     await expect(
       new Promise<string>((resolve, reject) =>
-        lookup("example.test", {}, (error, address) =>
+        lookup("93.184.216.34", {}, (error, address) =>
           error ? reject(error) : resolve(address!)
         )
       )

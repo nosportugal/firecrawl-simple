@@ -36,13 +36,20 @@ describe("fetchSitemap", () => {
     expect(mockAxios.get).not.toHaveBeenCalled();
   });
 
+  it("rejects non-standard ports", async () => {
+    await expect(
+      fetchSitemap("https://example.test:8080/sitemap.xml")
+    ).rejects.toThrow("Invalid sitemap URL");
+    expect(mockAxios.get).not.toHaveBeenCalled();
+  });
+
   it("disables redirects and allows public DNS results", async () => {
     mockDnsLookup.mockResolvedValue([
       { address: "93.184.216.34", family: 4 },
     ] as any);
     mockAxios.get.mockResolvedValue({ data: "<urlset />" } as any);
 
-    await fetchSitemap("https://example.test/sitemap.xml");
+    await fetchSitemap("https://example.test/a%20b/sitemap.xml?lang=en");
     const [url, options] = mockAxios.get.mock.calls[0];
     const lookup = options?.httpsAgent?.options.lookup as (
       hostname: string,
@@ -54,7 +61,9 @@ describe("fetchSitemap", () => {
       ) => void
     ) => void;
 
-    expect(url).toBe("https://93.184.216.34/sitemap.xml");
+    expect(url).toBe(
+      "https://93.184.216.34/a%20b/sitemap.xml?lang=en"
+    );
     expect(options?.maxRedirects).toBe(0);
     expect(options?.proxy).toBe(false);
     expect(options?.headers?.Host).toBe("example.test");

@@ -90,7 +90,8 @@ export const fetchSitemap = async (url: string, timeout = axiosTimeout) => {
   if (
     (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") ||
     parsedUrl.username ||
-    parsedUrl.password
+    parsedUrl.password ||
+    parsedUrl.port
   ) {
     throw new Error("Invalid sitemap URL");
   }
@@ -98,9 +99,32 @@ export const fetchSitemap = async (url: string, timeout = axiosTimeout) => {
   const [address] = await lookupPublicAddresses(parsedUrl.hostname);
   const requestHost =
     address.family === 6 ? `[${address.address}]` : address.address;
-  const requestUrl = `${parsedUrl.protocol}//${requestHost}${
-    parsedUrl.port ? `:${parsedUrl.port}` : ""
-  }${parsedUrl.pathname}${parsedUrl.search}`;
+  const requestProtocol =
+    parsedUrl.protocol === "https:" ? "https:" : "http:";
+  const requestPath = parsedUrl.pathname
+    .split("/")
+    .map((segment) => {
+      const encoded = encodeURIComponent(decodeURIComponent(segment));
+      return encoded
+        .replace(/%24/gi, "$")
+        .replace(/%26/gi, "&")
+        .replace(/%2b/gi, "+")
+        .replace(/%2c/gi, ",")
+        .replace(/%3b/gi, ";")
+        .replace(/%3d/gi, "=")
+        .replace(/%3a/gi, ":")
+        .replace(/%40/gi, "@");
+    })
+    .join("/");
+  const requestSearch = Array.from(parsedUrl.searchParams.entries())
+    .map(
+      ([key, value]) =>
+        `${encodeURIComponent(key)}=${encodeURIComponent(value)}`
+    )
+    .join("&");
+  const requestUrl = `${requestProtocol}//${requestHost}${requestPath}${
+    requestSearch ? `?${requestSearch}` : ""
+  }`;
   const isIpAddress = isIP(parsedUrl.hostname.replace(/^\[|\]$/g, "")) !== 0;
 
   return axios.get(requestUrl, {
